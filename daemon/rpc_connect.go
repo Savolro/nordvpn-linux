@@ -132,7 +132,6 @@ func (r *RPC) connect(
 		if err := r.netw.PermitIPv6(); err != nil {
 			log.Println(internal.ErrorPrefix, "failed to re-enable ipv6:", err)
 		}
-		r.endpoint = network.DefaultEndpoint(r.endpointResolver, server.IPs())
 	} else {
 		ip, err := server.IPv4()
 		if err != nil {

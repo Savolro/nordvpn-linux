@@ -99,6 +99,10 @@ func (r *RPC) Logout(ctx context.Context, in *pb.LogoutRequest) (payload *pb.Pay
 		}
 	}
 
+	if !r.ncClient.Revoke() {
+		log.Println(internal.WarningPrefix, "error revoking NC token")
+	}
+
 	if err := r.cm.SaveWith(func(c config.Config) config.Config {
 		delete(c.TokensData, c.AutoConnectData.ID)
 		c.AutoConnectData.ID = 0

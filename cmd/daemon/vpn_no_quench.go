@@ -20,7 +20,7 @@ func (noopNordWhisper) Start(context.Context, vpn.Credentials, vpn.ServerData) e
 func (noopNordWhisper) Stop() error                                                  { return nil }
 func (noopNordWhisper) State() vpn.State                                             { return "" }
 func (noopNordWhisper) IsActive() bool                                               { return false }
-func (noopNordWhisper) Tun() tunnel.T                                                { return &tunnel.Tunnel{} }
+func (noopNordWhisper) Tun() tunnel.T                                                { return nil }
 func (noopNordWhisper) NetworkChanged() error                                        { return nil }
 func (noopNordWhisper) GetConnectionParameters() (vpn.ServerData, bool) {
 	return vpn.ServerData{}, false

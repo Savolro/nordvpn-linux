@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"time"
 
 	"golang.org/x/net/netutil"
@@ -23,7 +22,6 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/config"
 	"github.com/NordSecurity/nordvpn-linux/core"
 	"github.com/NordSecurity/nordvpn-linux/daemon"
-	"github.com/NordSecurity/nordvpn-linux/daemon/device"
 	"github.com/NordSecurity/nordvpn-linux/daemon/dns"
 	daemonevents "github.com/NordSecurity/nordvpn-linux/daemon/events"
 	"github.com/NordSecurity/nordvpn-linux/daemon/firewall"
@@ -31,19 +29,13 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/daemon/firewall/forwarder"
 	"github.com/NordSecurity/nordvpn-linux/daemon/firewall/iptables"
 	"github.com/NordSecurity/nordvpn-linux/daemon/firewall/notables"
-	"github.com/NordSecurity/nordvpn-linux/daemon/netstate"
 	"github.com/NordSecurity/nordvpn-linux/daemon/pb"
 	"github.com/NordSecurity/nordvpn-linux/daemon/response"
 	"github.com/NordSecurity/nordvpn-linux/daemon/routes"
-	"github.com/NordSecurity/nordvpn-linux/daemon/routes/ifgroup"
-	"github.com/NordSecurity/nordvpn-linux/daemon/routes/iprule"
-	netlinkrouter "github.com/NordSecurity/nordvpn-linux/daemon/routes/netlink"
 	"github.com/NordSecurity/nordvpn-linux/daemon/routes/norouter"
-	"github.com/NordSecurity/nordvpn-linux/daemon/routes/norule"
+	"github.com/NordSecurity/nordvpn-linux/daemon/routes/winroute"
 	"github.com/NordSecurity/nordvpn-linux/daemon/state"
 	"github.com/NordSecurity/nordvpn-linux/daemon/vpn"
-	"github.com/NordSecurity/nordvpn-linux/daemon/vpn/nordlynx"
-	"github.com/NordSecurity/nordvpn-linux/daemon/vpn/openvpn"
 	"github.com/NordSecurity/nordvpn-linux/distro"
 	"github.com/NordSecurity/nordvpn-linux/events"
 	"github.com/NordSecurity/nordvpn-linux/events/logger"
@@ -62,7 +54,6 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/nc"
 	"github.com/NordSecurity/nordvpn-linux/network"
 	"github.com/NordSecurity/nordvpn-linux/networker"
-	"github.com/NordSecurity/nordvpn-linux/norduser"
 	norduserservice "github.com/NordSecurity/nordvpn-linux/norduser/service"
 	"github.com/NordSecurity/nordvpn-linux/request"
 	"github.com/NordSecurity/nordvpn-linux/sharedctx"
@@ -174,9 +165,6 @@ func main() {
 
 	daemonEvents.Settings.Subscribe(logger.NewSubscriber())
 
-	// try to restore resolv.conf if target file contains Nordvpn changes
-	dns.RestoreResolvConfFile()
-
 	// Firewall
 	stateModule := "conntrack"
 	stateFlag := "--ctstate"
@@ -226,14 +214,12 @@ func main() {
 		threatProtectionLiteServers = dns.NewNameServers(nameservers.Servers)
 	}
 
-	resolver := network.NewResolver(fw, threatProtectionLiteServers)
-
 	if err := SetBufferSizeForHTTP3(); err != nil {
 		log.Println(internal.WarningPrefix, "failed to set buffer size for HTTP/3:", err)
 	}
 
 	httpClientWithRotator := request.NewStdHTTP()
-	httpClientWithRotator.Transport = createTimedOutTransport(resolver, cfg.FirewallMark, httpCallsSubject, daemonEvents.Service.Connect)
+	httpClientWithRotator.Transport = createTimedOutTransport(cfg.FirewallMark, httpCallsSubject, daemonEvents.Service.Connect)
 
 	defaultAPI := core.NewDefaultAPI(
 		userAgent,
@@ -258,8 +244,6 @@ func main() {
 		Arch,
 		httpClientSimple,
 	)
-	gwret := netlinkrouter.Retriever{}
-	dnsSetter := dns.NewSetter(infoSubject)
 	dnsHostSetter := dns.NewHostsFileSetter(dns.HostsFilePath)
 
 	eventsDbPath := filepath.Join(internal.DatFilesPath, "moose.db")
@@ -324,35 +308,14 @@ func main() {
 		}
 	}
 
-	devices, err := device.ListPhysical()
-	if err != nil {
-		log.Fatalln(err)
-	}
-	ifaceNames := []string{}
-	for _, d := range devices {
-		ifaceNames = append(ifaceNames, d.Name)
-	}
-
 	mesh, err := meshnetImplementation(vpnFactory)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	allowlistRouter := routes.NewRouter(
-		&norouter.Facade{},
-		&netlinkrouter.Router{},
-		cfg.Routing.Get(),
-	)
-	vpnRouter := routes.NewRouter(
-		&norouter.Facade{},
-		&netlinkrouter.Router{},
-		cfg.Routing.Get(),
-	)
-	meshRouter := routes.NewRouter(
-		&norouter.Facade{},
-		&netlinkrouter.Router{},
-		cfg.Routing.Get(),
-	)
+	allowlistRouter := routes.NewRouter(&norouter.Facade{}, &winroute.Router{}, cfg.Routing.Get())
+	vpnRouter := routes.NewRouter(&norouter.Facade{}, &winroute.Router{}, cfg.Routing.Get())
+	meshRouter := routes.NewRouter(&norouter.Facade{}, &winroute.Router{}, cfg.Routing.Get())
 
 	statePublisher := state.NewState()
 	internalVpnEvents.Subscribe(statePublisher)
@@ -362,30 +325,21 @@ func main() {
 	netw := networker.NewCombined(
 		vpn,
 		mesh,
-		gwret,
 		infoSubject,
 		allowlistRouter,
-		dnsSetter,
+		dnsSetter{},
 		ipv6.NewIpv6(),
 		fw,
 		allowlist.NewAllowlistRouting(func(command string, arg ...string) ([]byte, error) {
 			arg = append(arg, "-w", internal.SecondsToWaitForIptablesLock)
 			return exec.Command(command, arg...).CombinedOutput()
 		}),
-		device.ListPhysical,
-		routes.NewPolicyRouter(
-			&norule.Facade{},
-			iprule.NewRouter(
-				routes.NewSysctlRPFilterManager(),
-				ifgroup.NewNetlinkManager(device.ListPhysical),
-				cfg.FirewallMark,
-			),
-			cfg.Routing.Get(),
-		),
+		net.Interfaces,
+		nil,
 		dnsHostSetter,
 		vpnRouter,
 		meshRouter,
-		forwarder.NewForwarder(ifaceNames, func(command string, arg ...string) ([]byte, error) {
+		forwarder.NewForwarder([]string{"TODO"}, func(command string, arg ...string) ([]byte, error) {
 			arg = append(arg, "-w", internal.SecondsToWaitForIptablesLock)
 			return exec.Command(command, arg...).CombinedOutput()
 		},
@@ -407,7 +361,7 @@ func main() {
 	if snapconf.IsUnderSnap() {
 		norduserService = norduserservice.NewNorduserSnapService()
 	} else {
-		norduserService = norduserservice.NewChildProcessNorduser()
+		norduserService = nil
 	}
 
 	norduserClient := norduserservice.NewNorduserGRPCClient()
@@ -440,7 +394,6 @@ func main() {
 		errSubject,
 		accountUpdateEvents,
 	)
-	endpointResolver := network.NewDefaultResolverChain(fw)
 	notificationClient := nc.NewClient(
 		nc.MqttClientBuilder{},
 		infoSubject,
@@ -473,7 +426,6 @@ func main() {
 		Version,
 		daemonEvents,
 		vpnFactory,
-		&endpointResolver,
 		netw,
 		debugSubject,
 		threatProtectionLiteServers,
@@ -499,22 +451,7 @@ func main() {
 		sharedContext,
 	)
 
-	opts := []grpc.ServerOption{
-		grpc.Creds(internal.NewUnixSocketCredentials(internal.NewDaemonAuthenticator())),
-	}
-
-	norduserMonitor := norduser.NewNorduserProcessMonitor(norduserService)
-	go func() {
-		if snapconf.IsUnderSnap() {
-			if err := norduserMonitor.StartSnap(); err != nil {
-				log.Println(internal.ErrorPrefix, "Error when starting norduser monitor for snap:", err.Error())
-			}
-		} else {
-			if err := norduserMonitor.Start(); err != nil {
-				log.Println(internal.ErrorPrefix, "Error when starting norduser monitor:", err.Error())
-			}
-		}
-	}()
+	opts := []grpc.ServerOption{}
 
 	middleware := grpcmiddleware.Middleware{}
 	if snapconf.IsUnderSnap() {
@@ -523,9 +460,9 @@ func main() {
 		middleware.AddUnaryMiddleware(checker.UnaryInterceptor)
 	} else {
 		// in non snap environment, norduser is started on the daemon side on every command
-		norduserMiddleware := norduser.NewStartNorduserMiddleware(norduserService)
-		middleware.AddStreamMiddleware(norduserMiddleware.StreamMiddleware)
-		middleware.AddUnaryMiddleware(norduserMiddleware.UnaryMiddleware)
+		// norduserMiddleware := norduser.NewStartNorduserMiddleware(norduserService)
+		// middleware.AddStreamMiddleware(norduserMiddleware.StreamMiddleware)
+		// middleware.AddUnaryMiddleware(norduserMiddleware.UnaryMiddleware)
 	}
 
 	opts = append(opts, grpc.StreamInterceptor(middleware.StreamIntercept))
@@ -541,15 +478,13 @@ func main() {
 			listener net.Listener
 			err      error
 		)
+		ConnType = string(sockTCP)
+		ConnURL = "localhost:6969"
 		switch socketType(ConnType) {
 		case sockUnix:
-			// use systemd listener by default
-			listenerFunction := internal.SystemDListener
-			// switch to manual if pids mismatch
-			if os.Getenv(internal.ListenPID) != strconv.Itoa(os.Getpid()) {
-				listenerFunction = internal.ManualListenerIfNotInUse(ConnURL,
-					internal.PermUserRWGroupRW, internal.DaemonPid)
-			}
+			listenerFunction := internal.ManualListenerIfNotInUse(ConnURL,
+				internal.PermUserRWGroupRW, internal.DaemonPid)
+
 			listener, err = listenerFunction()
 			if err != nil {
 				log.Fatalf("Error on listening to UNIX domain socket: %s\n", err)
@@ -593,12 +528,6 @@ func main() {
 		go rpc.StartAutoConnect(network.ExponentialBackoff)
 	}
 
-	monitor, err := netstate.NewNetlinkMonitor([]string{openvpn.InterfaceName, nordlynx.InterfaceName})
-	if err != nil {
-		log.Fatalln(err)
-	}
-	monitor.Start(netw)
-
 	if authChecker.IsLoggedIn() {
 		go daemon.StartNC("[startup]", notificationClient)
 	}
@@ -626,3 +555,8 @@ func main() {
 		log.Println(internal.ErrorPrefix, "stopping KillSwitch:", err)
 	}
 }
+
+type dnsSetter struct{}
+
+func (dnsSetter) Set(iface string, nameservers []string) error { return nil }
+func (dnsSetter) Unset(iface string) error                     { return nil }

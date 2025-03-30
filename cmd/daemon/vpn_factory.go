@@ -7,7 +7,6 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/config"
 	"github.com/NordSecurity/nordvpn-linux/daemon"
 	"github.com/NordSecurity/nordvpn-linux/daemon/vpn"
-	"github.com/NordSecurity/nordvpn-linux/daemon/vpn/openvpn"
 	"github.com/NordSecurity/nordvpn-linux/internal"
 )
 
@@ -32,8 +31,6 @@ func getVpnFactory(eventsDbPath string, fwmark uint32, envIsDev bool,
 		switch tech {
 		case config.Technology_NORDLYNX:
 			return nordlynxVPN, nordLynxErr
-		case config.Technology_OPENVPN:
-			return openvpn.New(fwmark, eventsPublisher), nil
 		case config.Technology_NORDWHISPER:
 			return nordWhisperVPN, nordWhisperErr
 		case config.Technology_UNKNOWN_TECHNOLOGY:

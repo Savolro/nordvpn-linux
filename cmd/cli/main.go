@@ -9,12 +9,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
 	childprocess "github.com/NordSecurity/nordvpn-linux/child_process"
 	"github.com/NordSecurity/nordvpn-linux/cli"
-	"github.com/NordSecurity/nordvpn-linux/fileshare/fileshare_process"
 	"github.com/NordSecurity/nordvpn-linux/internal"
 	"github.com/NordSecurity/nordvpn-linux/norduser/process"
 	"github.com/NordSecurity/nordvpn-linux/snapconf"
@@ -30,7 +30,7 @@ var (
 	Version     = "0.0.0"
 	Environment = ""
 	Hash        = ""
-	DaemonURL   = fmt.Sprintf("%s://%s", internal.Proto, internal.DaemonSocket)
+	DaemonURL   = "localhost:6969"
 )
 
 func getNorduserManager() childprocess.ChildProcessManager {
@@ -65,6 +65,7 @@ func clearFormatting(input string) string {
 func main() {
 	defer func() {
 		if r := recover(); r != nil {
+			fmt.Println(r, string(debug.Stack()))
 			log.Println(internal.UnhandledMessage)
 		}
 	}()
@@ -89,7 +90,7 @@ func main() {
 	log.SetOutput(fileLogger)
 
 	loaderInterceptor := cli.LoaderInterceptor{}
-	conn, err := grpc.Dial(
+	conn, err := grpc.NewClient(
 		DaemonURL,
 		// Insecure credentials are OK because the connection is completely local and
 		// protected by file permissions
@@ -97,15 +98,13 @@ func main() {
 		grpc.WithUnaryInterceptor(loaderInterceptor.UnaryInterceptor),
 		grpc.WithStreamInterceptor(loaderInterceptor.StreamInterceptor),
 	)
-	fileshareConn, err := grpc.Dial(
-		fileshare_process.FileshareURL,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithUnaryInterceptor(loaderInterceptor.UnaryInterceptor),
-		grpc.WithStreamInterceptor(loaderInterceptor.StreamInterceptor),
-	)
+	if err != nil {
+		color.Red(err.Error())
+		os.Exit(1)
+	}
 
 	cmd, err := cli.NewApp(
-		Version, Environment, Hash, Salt, err, conn, fileshareConn, &loaderInterceptor)
+		Version, Environment, Hash, Salt, err, conn, &loaderInterceptor)
 	if err != nil {
 		color.Red(err.Error())
 		os.Exit(1)

@@ -1,28 +1,23 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/NordSecurity/nordvpn-linux/events"
 	"github.com/NordSecurity/nordvpn-linux/internal"
 	"github.com/NordSecurity/nordvpn-linux/kernel"
-	"github.com/NordSecurity/nordvpn-linux/network"
 	"github.com/NordSecurity/nordvpn-linux/request"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/exp/slices"
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -44,50 +39,9 @@ func SetBufferSizeForHTTP3() error {
 	return nil
 }
 
-func createH1Transport(resolver network.DNSResolver, fwmark uint32) func() http.RoundTripper {
+func createH1Transport(fwmark uint32) func() http.RoundTripper {
 	return func() http.RoundTripper {
-		var operr error
-		fwmark := func(fd uintptr) {
-			operr = syscall.SetsockoptInt(
-				int(fd),
-				unix.SOL_SOCKET,
-				unix.SO_MARK,
-				int(fwmark),
-			)
-		}
-		dialer := &net.Dialer{
-			Control: func(network, address string, conn syscall.RawConn) error {
-				if err := conn.Control(fwmark); err != nil {
-					return err
-				}
-				return operr
-			},
-			Timeout: request.DefaultTimeout,
-		}
 		return &http.Transport{
-			DialContext: func(ctx context.Context, netw, addr string) (net.Conn, error) {
-				domain, _, ok := strings.Cut(addr, ":")
-				if !ok {
-					return nil, fmt.Errorf("malformed address: %s", addr)
-				}
-
-				ips, err := resolver.Resolve(domain)
-				if err != nil {
-					return nil, err
-				}
-
-				var newAddr string
-				if ip := ips[0]; ip.Is6() {
-					newAddr = fmt.Sprintf("[%s]", ip.String())
-				} else {
-					newAddr = ip.String()
-				}
-				return dialer.DialContext(
-					ctx,
-					netw,
-					strings.ReplaceAll(addr, domain, newAddr),
-				)
-			},
 			TLSHandshakeTimeout: request.TransportTimeout,
 		}
 	}
@@ -136,7 +90,6 @@ func validateHTTPTransportsString(val string) []string {
 
 // createTimedOutTransports provides transports to APIs' client
 func createTimedOutTransport(
-	resolver network.DNSResolver,
 	fwmark uint32,
 	httpCallsSubject events.Publisher[events.DataRequestAPI],
 	connectSubject events.PublishSubcriber[events.DataConnect],
@@ -152,7 +105,7 @@ func createTimedOutTransport(
 	var h1Transport *request.HTTPReTransport
 	var h3Transport *request.QuicTransport
 	if containsH1 {
-		h1Transport = request.NewHTTPReTransport(createH1Transport(resolver, fwmark))
+		h1Transport = request.NewHTTPReTransport(createH1Transport(fwmark))
 		connectSubject.Subscribe(h1Transport.NotifyConnect)
 		if !containsH3 {
 			return request.NewPublishingRoundTripper(

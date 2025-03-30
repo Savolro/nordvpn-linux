@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NordSecurity/nordvpn-linux/daemon/pb"
-	filesharepb "github.com/NordSecurity/nordvpn-linux/fileshare/pb"
 	"github.com/NordSecurity/nordvpn-linux/internal"
 	"github.com/NordSecurity/nordvpn-linux/nstrings"
 
@@ -52,32 +51,6 @@ func (c *cmd) SetNotify(ctx *cli.Context) error {
 		printMessage = messageNothingToSet
 	case internal.CodeSuccess:
 		printMessage = messageSuccess
-	}
-
-	if c.IsFileshareDaemonReachable(ctx) != nil {
-		return nil
-	}
-
-	fileshareDaemonResp, err := c.fileshareClient.SetNotifications(context.Background(),
-		&filesharepb.SetNotificationsRequest{Enable: flag})
-
-	if err != nil {
-		return formatError(err)
-	}
-
-	// We configure notifications for main and fileshare daemon
-	// if both notifications were configured successfully, report success to the user
-	// if main daemon was already configured but fileshare daemon was not yet configured and vice versa, report success
-	// if both daemons were already configured, report already configured
-	switch fileshareDaemonResp.Status {
-	case filesharepb.SetNotificationsStatus_NOTHING_TO_DO:
-		return nil
-	case filesharepb.SetNotificationsStatus_SET_SUCCESS:
-		printMessage = messageSuccess
-	case filesharepb.SetNotificationsStatus_SET_FAILURE:
-		printMessage = func() {
-			color.Red(internal.UnhandledMessage)
-		}
 	}
 
 	return nil

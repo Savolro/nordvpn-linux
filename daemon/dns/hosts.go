@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	HostsFilePath = "/etc/hosts"
-	mark          = "# NordVPN"
+	mark = "# NordVPN"
 )
 
 type Hosts []Host

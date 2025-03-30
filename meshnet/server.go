@@ -9,8 +9,6 @@ import (
 
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
-	"golang.org/x/sys/unix"
-	"google.golang.org/grpc/peer"
 
 	"golang.org/x/exp/slices"
 
@@ -22,7 +20,6 @@ import (
 	daemonevents "github.com/NordSecurity/nordvpn-linux/daemon/events"
 	"github.com/NordSecurity/nordvpn-linux/daemon/vpn"
 	"github.com/NordSecurity/nordvpn-linux/events"
-	"github.com/NordSecurity/nordvpn-linux/internal"
 	"github.com/NordSecurity/nordvpn-linux/meshnet/pb"
 	"github.com/NordSecurity/nordvpn-linux/norduser/service"
 	"github.com/NordSecurity/nordvpn-linux/sharedctx"
@@ -190,24 +187,8 @@ func (s *Server) EnableMeshnet(ctx context.Context, _ *pb.Empty) (*pb.MeshnetRes
 		}, nil
 	}
 
-	// When creating gRPC server we provide credentials.TransportCredentials implementation which
-	// extracts unix.Ucred information from unix socket about the process that made the gRPC request
-	var ucred unix.Ucred
-	peer, ok := peer.FromContext(ctx)
-	if !ok || peer.AuthInfo == nil {
-		s.pub.Publish(fmt.Errorf("unable to retrieve AuthInfo from gRPC context"))
-	} else {
-		ucred, err = internal.StringToUcred(peer.AuthInfo.AuthType())
-		if err != nil {
-			s.pub.Publish(fmt.Errorf("error while parsing AuthType: %w", err))
-		}
-	}
-
 	if err = s.cm.SaveWith(func(c config.Config) config.Config {
 		c.Mesh = true
-		c.Meshnet.EnabledByUID = ucred.Uid
-		c.Meshnet.EnabledByGID = ucred.Gid
-
 		if !c.MeshDevice.IsEqual(resp.Machine) {
 			// update current machine info, it is changed. e.g. nickname
 			c.MeshDevice = &resp.Machine
@@ -224,16 +205,8 @@ func (s *Server) EnableMeshnet(ctx context.Context, _ *pb.Empty) (*pb.MeshnetRes
 
 	s.daemonEvents.Settings.Meshnet.Publish(true)
 
-	// We want to enable filesharing only after setting config to avoid race condition
-	// because filesharing daemon checks whether meshnet is enabled.
-	// Also not returning errors on filesharing enabling failure because it is not essential
-	// for Meshnet usage.
-	if ucred.Pid != 0 {
-		if err = s.norduser.StartFileshare(ucred.Uid); err != nil {
-			s.pub.Publish(fmt.Errorf("enabling fileshare: %w", err))
-		}
-	} else {
-		s.pub.Publish(fmt.Errorf("ucred not set - skipping enabling fileshare"))
+	if err = s.norduser.StartFileshare(0); err != nil {
+		s.pub.Publish(fmt.Errorf("enabling fileshare: %w", err))
 	}
 
 	return &pb.MeshnetResponse{

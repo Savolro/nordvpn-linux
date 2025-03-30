@@ -1,0 +1,167 @@
+// Package tunnel provides an extension over standard library's net.Interface type.
+package tunnel
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"syscall"
+
+	"golang.org/x/sys/unix"
+)
+
+var (
+	// ErrNotFound is returned when no tunnel matches the search parameters.
+	ErrNotFound = errors.New("tunnel not found")
+)
+
+// GetTransferRates retrieves tunnel statistics in a thread safe manner
+func GetTransferRates(nicName string) (Statistics, error) {
+	out, err := os.ReadFile("/sys/class/net/" + nicName + "/statistics/rx_bytes")
+	if err != nil {
+		return Statistics{}, err
+	}
+
+	rx, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return Statistics{}, err
+	}
+
+	out, err = os.ReadFile("/sys/class/net/" + nicName + "/statistics/tx_bytes")
+	if err != nil {
+		return Statistics{}, err
+	}
+
+	tx, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return Statistics{}, err
+	}
+
+	return Statistics{Tx: tx, Rx: rx}, nil
+}
+
+// Tunnel encrypts and decrypts network traffic.
+type Tunnel struct {
+	// might be a good idea to change this to a pointer now
+	// so that we could see changes to the interface at real time
+	// but this would need testing first to check if it actually works
+	iface  net.Interface
+	ips    []netip.Addr
+	prefix netip.Prefix
+}
+
+func New(iface net.Interface, ips []netip.Addr, prefix netip.Prefix) *Tunnel {
+	return &Tunnel{iface: iface, ips: ips, prefix: prefix}
+}
+
+// Interface returns the underlying network interface.
+func (t *Tunnel) Interface() net.Interface { return t.iface }
+
+// IPs attached to the tunnel.
+func (t *Tunnel) IPs() []netip.Addr { return t.ips }
+
+// Find a tunnel with given IPs.
+func Find(ipAddrs ...netip.Addr) (Tunnel, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return Tunnel{}, err
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return Tunnel{}, err
+		}
+
+		for _, addr := range addrs {
+			subnet, err := netip.ParsePrefix(addr.String())
+			if err != nil {
+				continue
+			}
+
+			var ips []netip.Addr
+			for _, ip := range ipAddrs {
+				if subnet.Contains(ip) {
+					ips = append(ips, ip)
+				}
+			}
+
+			if len(ips) == 0 {
+				continue
+			}
+
+			return Tunnel{
+				iface: iface,
+				ips:   ips,
+			}, nil
+		}
+	}
+	return Tunnel{}, ErrNotFound
+}
+
+func addDelAddr(cmd string, ifaceName string, addr string) ([]byte, error) {
+	// #nosec G204 -- input is properly sanitized
+	cmdHandle := exec.Command(
+		"ip",
+		"address",
+		cmd,
+		addr,
+		"dev",
+		ifaceName,
+	)
+	return cmdHandle.CombinedOutput()
+}
+
+func (t *Tunnel) cmdAddrs(cmd string) error {
+	if len(t.ips) > 0 {
+		for _, ip := range t.ips {
+			mask := 10 // unify with other platforms
+			if ip.BitLen() > 32 {
+				mask = ip.BitLen() // ipv6
+			}
+			out, err := addDelAddr(cmd, t.iface.Name, fmt.Sprintf("%s/%d", ip.String(), mask))
+			if err != nil {
+				return fmt.Errorf("%s IP address to interface: %s : %w", cmd, string(out), err)
+			}
+		}
+	} else {
+		addDelAddr(cmd, t.iface.Name, t.prefix.String())
+	}
+	return nil
+}
+
+// AddAddrs to a tunnel interface.
+func (t *Tunnel) AddAddrs() error {
+	return t.cmdAddrs("add")
+}
+
+// DelAddrs from a tunnel interface.
+func (t *Tunnel) DelAddrs() error {
+	return t.cmdAddrs("del")
+}
+
+// Up sets tunnel state to up.
+func (t *Tunnel) Up() error {
+	fd, err := unix.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, syscall.IPPROTO_IP)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+
+	req, err := unix.NewIfreq(t.iface.Name)
+	if err != nil {
+		return err
+	}
+	req.SetUint16(req.Uint16() | unix.IFF_UP)
+
+	return unix.IoctlIfreq(fd, unix.SIOCSIFFLAGS, req)
+}
+
+// TransferRates collects data transfer statistics.
+func (t Tunnel) TransferRates() (Statistics, error) {
+	return GetTransferRates(t.iface.Name)
+}

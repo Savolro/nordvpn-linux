@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	daemonpb "github.com/NordSecurity/nordvpn-linux/daemon/pb"
-	"github.com/NordSecurity/nordvpn-linux/fileshare"
 	"github.com/NordSecurity/nordvpn-linux/internal"
 	"github.com/NordSecurity/nordvpn-linux/meshnet"
 	"github.com/NordSecurity/nordvpn-linux/meshnet/pb"
@@ -463,11 +462,6 @@ func (c *cmd) MeshPeerEnableAutomaticFileshare(ctx *cli.Context) error {
 	peer, err := c.retrievePeerFromArgs(ctx)
 	if err != nil {
 		return formatError(err)
-	}
-
-	_, err = fileshare.GetDefaultDownloadDirectory()
-	if err != nil {
-		return errors.New(MsgMeshnetPeerAutomaticFileshareDefaultDirNotFound)
 	}
 
 	resp, err := c.meshClient.EnableAutomaticFileshare(

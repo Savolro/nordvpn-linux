@@ -172,32 +172,15 @@ func New(prod bool, eventPath string, fwmark uint32,
 	vpnLibCfg vpn.LibConfigGetter, appVersion string, eventsPublisher *vpn.Events,
 ) (*Libtelio, error) {
 	events := make(chan state)
-	features, err := handleTelioConfig(eventPath, appVersion, prod, vpnLibCfg)
-	if err != nil {
-		log.Println(internal.ErrorPrefix, "failed to get telio config:", err)
-
-		defaultTelioConfig := teliogo.NewFeaturesDefaultsBuilder().
-			EnableDirect().
-			EnableLana(eventPath, prod).
-			EnableNurse().
-			Build()
-
-		defaultTelioConfig.Nurse.HeartbeatInterval = defaultHeartbeatInterval
-
-		features = &defaultTelioConfig
-	}
-
-	featuresString, err := json.Marshal(features)
-	if err != nil {
-		log.Println(internal.WarningPrefix, "failed to encode telio config:", err)
-		// pass through - encoding is for the logging purposes
-	} else {
-		log.Println(internal.InfoPrefix, "telio final config:", string(featuresString))
-	}
-
 	var loggerCb teliogo.TelioLoggerCb = &telioLoggerCb{}
 	teliogo.SetGlobalLogger(teliogo.TelioLogLevelInfo, loggerCb)
-	lib, err := teliogo.NewTelio(*features, eventCallback(events))
+
+	features, err := teliogo.DeserializeFeatureConfig("{}")
+	if err != nil {
+		log.Println(internal.ErrorPrefix, "failed to get telio config:", err)
+	}
+
+	lib, err := teliogo.NewTelio(features, eventCallback(events))
 	if err != nil {
 		log.Println(internal.ErrorPrefix, "failed to create telio instance:", err)
 		return nil, err
@@ -566,18 +549,15 @@ func (l *Libtelio) openTunnel(ip netip.Addr, privateKey string) (err error) {
 		}
 	}
 
-	adapter := teliogo.TelioAdapterTypeLinuxNativeTun
-	if l.isKernelDisabled {
-		adapter = teliogo.TelioAdapterTypeBoringTun
-	}
+	adapter := teliogo.TelioAdapterTypeWindowsNativeTun
 
 	if err := l.lib.StartNamed(privateKey, adapter, nordlynx.InterfaceName); err != nil {
 		if l.isKernelDisabled {
 			return fmt.Errorf("starting libtelio: %w", err)
 		}
-		adapter = teliogo.TelioAdapterTypeBoringTun
+		adapter = teliogo.TelioAdapterTypeWireguardGoTun
 		if err := l.lib.StartNamed(privateKey, adapter, nordlynx.InterfaceName); err != nil {
-			return fmt.Errorf("starting libtelio on retry with boring-tun: %w", err)
+			return fmt.Errorf("starting libtelio on retry with wg-go: %w", err)
 		}
 		l.isKernelDisabled = true
 	}

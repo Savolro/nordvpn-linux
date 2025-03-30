@@ -29,7 +29,6 @@ func NewTelioConfig(rc remote.RemoteConfigGetter) *TelioConfig {
 	return &TelioConfig{
 		fetchers: []TelioConfigFetcher{
 			&TelioLocalConfigFetcher{},
-			&TelioRemoteConfigFetcher{rc},
 		},
 	}
 }

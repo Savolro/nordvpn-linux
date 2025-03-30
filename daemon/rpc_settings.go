@@ -7,24 +7,10 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/config"
 	"github.com/NordSecurity/nordvpn-linux/daemon/pb"
 	"github.com/NordSecurity/nordvpn-linux/internal"
-	"google.golang.org/grpc/peer"
 )
 
 // Settings returns system daemon settings
 func (r *RPC) Settings(ctx context.Context, in *pb.Empty) (*pb.SettingsResponse, error) {
-	peer, ok := peer.FromContext(ctx)
-	var uid int64
-	if ok {
-		cred, ok := peer.AuthInfo.(internal.UcredAuth)
-		if !ok {
-			log.Println(internal.ErrorPrefix, "failed to get user ID")
-			return &pb.SettingsResponse{
-				Type: internal.CodeFailure,
-			}, nil
-		}
-		uid = int64(cred.Uid)
-	}
-
 	var cfg config.Config
 	if err := r.cm.Load(&cfg); err != nil {
 		log.Println(internal.ErrorPrefix, err)
@@ -60,7 +46,7 @@ func (r *RPC) Settings(ctx context.Context, in *pb.Empty) (*pb.SettingsResponse,
 		}
 	}
 
-	settings := configToProtobuf(&cfg, uid)
+	settings := configToProtobuf(&cfg, 0)
 
 	return &pb.SettingsResponse{
 		Type: internal.CodeSuccess,

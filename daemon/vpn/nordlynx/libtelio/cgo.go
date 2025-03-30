@@ -5,5 +5,5 @@ package libtelio
 // #cgo arm LDFLAGS: -L${SRCDIR}/../../../../bin/deps/lib/libtelio/current/armel
 // #cgo arm LDFLAGS: -L${SRCDIR}/../../../../bin/deps/lib/libtelio/current/armhf
 // #cgo arm64 LDFLAGS: -L${SRCDIR}/../../../../bin/deps/lib/libtelio/current/aarch64
-// #cgo LDFLAGS: -ldl -lm -ltelio
+// #cgo LDFLAGS: -lm -ltelio
 import "C"

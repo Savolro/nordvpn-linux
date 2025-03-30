@@ -108,20 +108,20 @@ var (
 
 var (
 	// RunDir defines default socket directory
-	RunDir = PrefixCommonPath("/run/nordvpn")
+	RunDir = PrefixCommonPath("nordvpn")
 
 	// LogPath defines where logs are located if systemd isn't used
-	LogPath = PrefixDataPath("/var/log/nordvpn")
+	LogPath = PrefixDataPath("nordvpn")
 
 	// AppDataPath defines path where app data is stored
-	AppDataPath = PrefixDataPath("/var/lib/nordvpn")
+	AppDataPath = PrefixDataPath("nordvpn")
 
 	// AppDataPathCommon defines path where common app data files are stored. These files may
 	// be removed after every app update
-	AppDataPathCommon = PrefixCommonPath("/var/lib/nordvpn")
+	AppDataPathCommon = PrefixCommonPath("nordvpn")
 
 	// AppDataPathStatic defines path where static app data (such as helper executables) are stored
-	AppDataPathStatic = PrefixStaticPath("/usr/lib/nordvpn")
+	AppDataPathStatic = PrefixStaticPath("nordvpn")
 
 	DatFilesPath = filepath.Join(AppDataPath, "data")
 

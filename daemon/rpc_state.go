@@ -7,7 +7,6 @@ import (
 	"github.com/NordSecurity/nordvpn-linux/daemon/pb"
 	"github.com/NordSecurity/nordvpn-linux/events"
 	"github.com/NordSecurity/nordvpn-linux/internal"
-	"google.golang.org/grpc/peer"
 )
 
 func configToProtobuf(cfg *config.Config, uid int64) *pb.Settings {
@@ -154,19 +153,7 @@ func statusStream(stateChan <-chan interface{},
 func (r *RPC) SubscribeToStateChanges(_ *pb.Empty, srv pb.Daemon_SubscribeToStateChangesServer) error {
 	log.Println(internal.InfoPrefix, "Received new subscription request")
 
-	peer, ok := peer.FromContext(srv.Context())
-	var uid int64
-	if ok {
-		cred, ok := peer.AuthInfo.(internal.UcredAuth)
-		if !ok {
-			return srv.Send(&pb.AppState{
-				State: &pb.AppState_Error{
-					Error: pb.AppStateError_FAILED_TO_GET_UID,
-				},
-			})
-		}
-		uid = int64(cred.Uid)
-	}
+	var uid int64 = 0
 
 	stateChan, stopChan := r.statePublisher.AddSubscriber()
 	statusStream(stateChan, stopChan, uid, srv, &r.ConnectionParameters)

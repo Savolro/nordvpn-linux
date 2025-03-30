@@ -88,14 +88,12 @@ var ErrConfig = errors.New(client.ConfigMessage)
 func NewApp(version, environment, hash, salt string,
 	pingErr error,
 	conn *grpc.ClientConn,
-	fileshareConn grpc.ClientConnInterface,
 	loaderInterceptor *LoaderInterceptor,
 ) (*cli.App, error) {
 	cmd := newCommander(internal.Environment(environment))
 	if pingErr == nil {
 		cmd.client = pb.NewDaemonClient(conn)
 		cmd.meshClient = meshpb.NewMeshnetClient(conn)
-		cmd.fileshareClient = filesharepb.NewFileshareClient(fileshareConn)
 	}
 
 	cli.AppHelpTemplate = AppHelpTemplate
@@ -567,14 +565,6 @@ func NewApp(version, environment, hash, salt string,
 
 	app.Commands = append(app.Commands, meshnetCommand(cmd))
 
-	if pingErr == nil {
-		fsCommand := fileshareCommand(cmd)
-		// TODO: This will currently result in Ping executed twice for every fileshare
-		// command but it helps to properly display errors.
-		fsCommand.Before = cmd.action(pingErr, fsCommand.Before)
-		app.Commands = append(app.Commands, fsCommand)
-	}
-
 	app.Commands = addLoaderToActions(cmd, pingErr, app.Commands)
 	// Unknown command handler
 	app.CommandNotFound = func(c *cli.Context, command string) {
@@ -583,82 +573,6 @@ func NewApp(version, environment, hash, salt string,
 	}
 
 	return app, nil
-}
-
-func fileshareCommand(c *cmd) *cli.Command {
-	return &cli.Command{
-		Name:        FileshareName,
-		Usage:       MsgFileshareUsage,
-		Description: MsgFileshareDescription,
-		Before:      c.IsFileshareDaemonReachable,
-		Subcommands: []*cli.Command{
-			{
-				Name:        FileshareSendName,
-				Action:      c.FileshareSend,
-				Usage:       MsgFileshareSendUsage,
-				ArgsUsage:   MsgFileshareSendArgsUsage,
-				Description: MsgFileshareSendDescription,
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:  flagFileshareNoWait,
-						Usage: MsgFileshareNoWaitUsage,
-					},
-				},
-				BashComplete: c.FileshareAutoCompletePeers,
-			},
-			{
-				Name:        FileshareAcceptName,
-				Action:      c.FileshareAccept,
-				Usage:       MsgFileshareAcceptUsage,
-				ArgsUsage:   MsgFileshareAcceptArgsUsage,
-				Description: MsgFileshareAcceptDescription,
-				Flags: []cli.Flag{
-					&cli.PathFlag{
-						Name:  flagFilesharePath,
-						Usage: MsgFileshareAcceptPathUsage,
-					},
-					&cli.BoolFlag{
-						Name:  flagFileshareNoWait,
-						Usage: MsgFileshareNoWaitUsage,
-					},
-				},
-				BashComplete: c.FileshareAutoCompleteTransfersAccept,
-			},
-			{
-				Name:        FileshareListName,
-				Action:      c.FileshareList,
-				Usage:       MsgFileshareListUsage,
-				ArgsUsage:   MsgFileshareListArgsUsage,
-				Description: MsgFileshareListDescription,
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:  flagFileshareListIn,
-						Usage: MsgFileshareListInUsage,
-					},
-					&cli.BoolFlag{
-						Name:  flagFileshareListOut,
-						Usage: MsgFileshareListOutUsage,
-					},
-				},
-				BashComplete: c.FileshareAutoCompleteTransfersList,
-			},
-			{
-				Name:         FileshareCancelName,
-				Action:       c.FileshareCancel,
-				Usage:        MsgFileshareCancelUsage,
-				ArgsUsage:    MsgFileshareCancelArgsUsage,
-				BashComplete: c.FileshareAutoCompleteTransfersCancel,
-			},
-			{
-				Name:         FileshareClearName,
-				Action:       c.FileshareClear,
-				Usage:        MsgFileshareClearUsage,
-				ArgsUsage:    MsgFileshareClearArgsUsage,
-				Description:  MsgFileshareClearDescription,
-				BashComplete: c.FileshareAutoCompleteClear,
-			},
-		},
-	}
 }
 
 func meshnetCommand(c *cmd) *cli.Command {
@@ -957,6 +871,9 @@ func newCommander(environment internal.Environment) *cmd {
 }
 
 func formatError(e error) error {
+	if e == nil {
+		return nil
+	}
 	var text string
 	if s, ok := status.FromError(e); ok {
 		text = s.Message()
